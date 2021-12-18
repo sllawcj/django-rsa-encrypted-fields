@@ -1,45 +1,46 @@
-import base64
-from django.conf import settings
-from cryptography.fernet import Fernet, MultiFernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import rsa
 from django.db import models
-from django.utils.functional import cached_property
+import base64
 
 
-class EncryptedFieldMixin(object):
-    @cached_property
-    def keys(self):
-        keys = []
-        salt_keys = settings.SALT_KEY if isinstance(settings.SALT_KEY, list) else [settings.SALT_KEY]
-        for salt_key in salt_keys:
-            salt = bytes(salt_key, 'utf-8')
-            kdf = PBKDF2HMAC(algorithm=hashes.SHA256(),
-                             length=32,
-                             salt=salt,
-                             iterations=100000,
-                             backend=default_backend())
-            keys.append(base64.urlsafe_b64encode(kdf.derive(settings.SECRET_KEY.encode('utf-8'))))
+class RSAFieldMixin(object):
+
+    def loadKeys(self, keys=[]):
+        if len(keys) == 0:
+            (pubkey, privkey) = rsa.newkeys(512)
+            keys.append(pubkey)
+            keys.append(privkey)
+        elif len(keys) == 2:
+            pubkey = keys[0]
+            privkey = keys[1]
+        else:
+            raise Exception("Invaild key array passed")
+
+        keys[0] = pubkey
+        keys[1] = privkey
+
         return keys
 
-    @cached_property
-    def f(self):
-        if len(self.keys) == 1:
-            return Fernet(self.keys[0])
-        return MultiFernet([Fernet(k) for k in self.keys])
+    def encrypt(self, value):
+        cryptoText = value.encode('utf8')
+        crypt = rsa.encrypt(cryptoText, self.loadKeys()[0])
+        return crypt.hex()
+
+    def decrypt(self, value):
+        value = bytes.fromhex(value)
+
+        text = rsa.decrypt(value, self.loadKeys()[1])
+        return text
 
     def get_internal_type(self):
         """
         To treat everything as text
         """
-        return 'TextField'
+        return 'CharField'
 
     def get_prep_value(self, value):
         if value:
-            if not isinstance(value, str):
-                value = str(value)
-            return self.f.encrypt(bytes(value, 'utf-8')).decode('utf-8')
+            return self.encrypt(value)
         return None
 
     def get_db_prep_value(self, value, connection, prepared=False):
@@ -51,39 +52,43 @@ class EncryptedFieldMixin(object):
         return self.to_python(value)
 
     def to_python(self, value):
-        if value is None or not isinstance(value, str):
+        if value is None:
             return value
-        value = self.f.decrypt(bytes(value, 'utf-8')).decode('utf-8')
-        return super(EncryptedFieldMixin, self).to_python(value)
+        value = self.decrypt(value)
+        return super(RSAFieldMixin, self).to_python(value.decode('utf8'))
 
 
-class EncryptedCharField(EncryptedFieldMixin, models.CharField):
+class RSACharField(RSAFieldMixin, models.CharField):
     pass
 
 
-class EncryptedTextField(EncryptedFieldMixin, models.TextField):
+class RSATextField(RSAFieldMixin, models.TextField):
     pass
 
 
-class EncryptedDateTimeField(EncryptedFieldMixin, models.DateTimeField):
+class RSADateTimeField(RSAFieldMixin, models.DateTimeField):
     pass
 
 
-class EncryptedIntegerField(EncryptedFieldMixin, models.IntegerField):
+class RSAIntegerField(RSAFieldMixin, models.IntegerField):
     pass
 
 
-class EncryptedDateField(EncryptedFieldMixin, models.DateField):
+class RSADateField(RSAFieldMixin, models.DateField):
     pass
 
 
-class EncryptedFloatField(EncryptedFieldMixin, models.FloatField):
+class RSAFloatField(RSAFieldMixin, models.FloatField):
     pass
 
 
-class EncryptedEmailField(EncryptedFieldMixin, models.EmailField):
+class RSAEmailField(RSAFieldMixin, models.EmailField):
     pass
 
 
-class EncryptedBooleanField(EncryptedFieldMixin, models.BooleanField):
+class RSABooleanField(RSAFieldMixin, models.BooleanField):
+    pass
+
+
+class RSABinaryField(RSAFieldMixin, models.BinaryField):
     pass
